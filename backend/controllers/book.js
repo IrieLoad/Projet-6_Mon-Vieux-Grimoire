@@ -5,10 +5,12 @@ exports.createBook = (req, res, next) => {
     const bookObject = JSON.parse(req.body.book);
     delete bookObject._id;
     delete bookObject._userId;
+    
     const book = new Book({
         ...bookObject,
         userId: req.auth.userId,
-        imageUrl: `${req.protocol}://${req.get('host')}/images/${req.file.filename}`
+        imageUrl: `${req.protocol}://${req.get('host')}/images/${req.file.filename}`,
+        averageRating: bookObject.ratings.length > 0 ? bookObject.ratings[0].grade : 0,
     });
 
     book.save()
@@ -67,3 +69,47 @@ exports.getAllBook = (req, res, next) => {
         .then(books => res.status(200).json(books))
         .catch(error => res.status(400).json({ error }));
 }
+
+exports.createRating = (req, res, next) => {
+    const { rating } = req.body;  
+    const userId = req.auth.userId;
+
+    if (typeof rating !== 'number' || rating < 0 || rating > 5) {
+        return res.status(400).json({ error: 'La note doit être comprise entre 0 et 5.' });
+    }
+
+    Book.findOne({ _id: req.params.id })
+    .then(book => {
+        if (!book) {
+            return res.status(404).json({ error: 'Livre introuvable.' });
+        }
+
+        // Vérifie que l'utilisateur n'a pas déjà noté ce livre
+        const userIdArray = book.ratings.map(rating => rating.userId);
+        if (userIdArray.includes(userId)) {
+            return res.status(403).json({ message : 'Not authorized' });
+        }
+
+        // Ajoute la nouvelle note au tableau ratings
+        book.ratings.push({ userId: userId, grade: rating });
+
+        // Recalcule la note moyenne
+        const totalRatings = book.ratings.reduce((sum, rating) => sum + rating.grade, 0);
+        book.averageRating = totalRatings / book.ratings.length;
+
+        // Enregistre les modifications
+        book.save()
+        .then(() => res.status(200).json({ message: 'Evaluation ajoutée avec succès!' }))
+        .catch(error => res.status(400).json({ error }));
+    })
+    .catch(error => res.status(500).json({ error }));
+};
+
+exports.getBestRating = (req, res, next) => {
+    Book.find()
+      .sort({ averageRating: -1 }) // Trie par note moyenne décroissante
+      .limit(3) // Limite à 3 livres
+      .then(books => res.status(200).json(books))
+      .catch(error => res.status(400).json({ error }));
+  };
+
